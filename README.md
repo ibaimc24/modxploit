@@ -1,4 +1,5 @@
-# modxploit
+# ModXploit
 
-# Dependecies
+## Dependecies
+In conda prompt:
 conda env create -f environment.yml

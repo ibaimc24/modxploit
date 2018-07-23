@@ -453,7 +453,6 @@ def get_supported_function_codes(cnx, results):
                 pass
         else:
             print("%d no answer" % i)
-    #print(supported_codes)
     return supported_codes
 
 
@@ -462,7 +461,7 @@ def get_coils_addresses(cnx, results):
     blocks = []
     start_in = 0
     flag = False
-    print("[*] Looking for supported address' in ReadCoils function. From 0 to 65.534")
+    print("[*] Looking for supported address' in ReadCoils function. From 0 to 65.535")
     for i in range(0, 65534):
         pkt = ModbusADU() / ModbusPDU01ReadCoils(startAddr=i, quantity=1)
         pkt.len = len(pkt.payload) + 1
@@ -477,7 +476,6 @@ def get_coils_addresses(cnx, results):
             return_code = int(data[14:16], 16)
 
             if return_code is 1 and not flag:
-                print("[i] Found")
                 # Start of a readable block
                 start_in = i
                 readable_addrs.append(i)
@@ -496,7 +494,8 @@ def get_coils_addresses(cnx, results):
                 blocks.append((start_in, ends_in))
             else:
                 pass
-
+    if flag:
+        blocks.append((start_in, 65535))
     results.add("COILS", blocks)
     return readable_addrs
 
@@ -506,7 +505,7 @@ def get_discrete_inputs_addresses(cnx, results):
     blocks = []
     flag = False
     start_in = 0
-    print("[*] Looking for supported address' in DiscreteInputs function. From 0 to 65.534")
+    print("[*] Looking for supported address' in DiscreteInputs function. From 0 to 65.535")
     for i in range(0, 65534):
         pkt = ModbusADU() / ModbusPDU02ReadDiscreteInputs(startAddr=i, quantity=1)
         pkt.len = len(pkt.payload) + 1
@@ -533,6 +532,8 @@ def get_discrete_inputs_addresses(cnx, results):
                 blocks.append((start_in, ends_in))
             else:
                 pass
+    if flag:
+        blocks.append((start_in, 65535))
 
     results.add("DISCRETE INPUTS", blocks)
     return blocks, readable_addrs
@@ -543,7 +544,7 @@ def get_holding_registers_addresses(cnx, results):
     flag = False
     start_in = 0
     ends_in = 0
-    print("[*] Looking for supported address' in HoldingRegsiters function. From 0 to 4095")
+    print("[*] Looking for supported address' in HoldingRegsiters function. From 0 to 65535")
     # TODO: Done to 65535. Expected an exception from 4095 to 65535
     for i in range(0, 65535):
         pkt = ModbusADU() / ModbusPDU03ReadHoldingRegisters(startAddr=i, quantity=1)
@@ -571,6 +572,8 @@ def get_holding_registers_addresses(cnx, results):
                 blocks.append((start_in, ends_in))
             else:
                 pass
+    if flag:
+        blocks.append((start_in, 65535))
 
     results.add("HOLDING REGISTERS", blocks)
     return blocks, readable_addrs
@@ -582,7 +585,7 @@ def get_input_registers_addresses(cnx, results):
     flag = False
     start_in = 0
     ends_in = 0
-    print("[*] Looking for supported address' in InputRegsiters function. From 0 to 4095")
+    print("[*] Looking for supported address' in InputRegsiters function. From 0 to 65535")
     # TODO: Done to 65535. Expected an exception from 4095 to 65535
     for i in range(0, 65535):
         pkt = ModbusADU() / ModbusPDU04ReadInputRegisters(startAddr=i, quantity=1)
@@ -611,6 +614,8 @@ def get_input_registers_addresses(cnx, results):
             else:
                 pass
 
+    if flag:
+        blocks.append((start_in, 65535))
     results.add("INPUT REGISTERS", blocks)
     return blocks, readable_addrs
 
@@ -679,11 +684,9 @@ class Results:
         self.SupportedFunctions.append(number)
 
     def show(self):
-        print(" #################################################################### ")
         print("\t SUPPORTED FUNCTION CODES")
         print("\t\t" + str(self.SupportedFunctions))
         for name, blocks in zip(self.Names, self.Blocks):
             print("\t\t"+name)
             for i in blocks:
-                print("\t\tFrom \t %d \t to \t %d" % (i[0], i[1]))
-        print(" #################################################################### ")
+                print("\t\t\tFrom \t %d \t to \t %d" % (i[0], i[1]))

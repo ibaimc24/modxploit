@@ -1,3 +1,4 @@
+
 name: Modbus_Simulation
 channels:
   - defaults
@@ -16,4 +17,3 @@ dependencies:
     - easygui==0.98.1
     - scapy-python3==0.23
 prefix: C:\Users\ibaim\AppData\Local\conda\conda\envs\Modbus_Simulation
-

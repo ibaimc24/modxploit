@@ -183,6 +183,8 @@ class ModbusPDU03ReadHoldingRegisters(Packet):
     fields_desc = [
         XByteField("funcCode", 0x03),
         XShortField("startAddr", 0x0001),
+
+        # Quantity of 16 bit registers
         XShortField("quantity", 0x0002)]
 
 
@@ -274,6 +276,14 @@ class ModbusPDU06WriteSingleRegisterException(Packet):
         ByteEnumField("exceptCode", 1, _modbus_exceptions)]
 
 
+class ModbusPDU08Diagnostics(Packet):
+    name = "Diagnostics"
+    fields_desc = [
+        XByteField("funcCode", 0x08),
+        XShortField("subFunction", 0x0000),
+        XShortField("data", 0x0000)]
+
+
 # 0x07 - Read Exception Status (Serial Line Only)
 class ModbusPDU07ReadExceptionStatus(Packet):
     name = "Read Exception Status"
@@ -337,6 +347,13 @@ class ModbusPDU10WriteMultipleRegistersAnswer(Packet):
         XByteField("funcCode", 0x10),
         XShortField("startingAddr", 0x0000),
         XShortField("quantityRegisters", 0x0001)]
+
+
+class ModbusPDU24ReadFIFOQueue(Packet):
+    name = "Read FIFO Queue"
+    fields_desc = [
+        XByteField("funcCode", 0x18),
+        XShortField("pointerAddr", 0x0000)]
 
 
 class ModbusPDU10WriteMultipleRegistersException(Packet):
@@ -411,52 +428,262 @@ def test_modbus(cnx):
             print("Diagnostics Code "+str(i)+" probably supported.")
 
 
-def get_supported_function_codes(cnx):
-    if not cnx:
-        return "Connection needs to be established first."
+def get_supported_function_codes(cnx, results):
 
     supported_codes = []
-    print("Looking for supported function codes... From 1 to 127")
+    print("[*] Looking for supported function codes... From 1 to 127")
     for i in range(1, 127):
         pkt = ModbusADU() / ModbusPDUReadGeneric(funcCode=i, quantity=6)
-        pkt.len = len(pkt.payload)
-        ans = cnx.sr1(pkt, timeout=timeout, verbose=0)
-
+        pkt.len = len(pkt.payload) + 1
+        try:
+            ans = cnx.sr1(pkt, timeout=timeout, verbose=0)
+        except OSError:
+            print("OSError detected with %d" % i)
+            continue
         if ans:
             # Hex encoded string
             data = binascii.hexlify(bytes(ans))
             return_code = int(data[14:16], 16)
             exception_code = int(data[17:18], 16)
-            if return_code is i or (return_code is i+80 and exception_code is not 1):
-                print(str(i) + " Supported.")
-                supported_codes.append(i)
+            if return_code is i or (return_code is i+128 and exception_code is not 1):
+                #print("[*] " + str(i) + " Supported.")
+                results.add_function(i)
+                #supported_codes.append(i)
             else:
                 pass
         else:
-            print("no answer")
-    print(supported_codes)
+            print("%d no answer" % i)
+    #print(supported_codes)
+    return supported_codes
 
 
-def get_registered_addresses(cnx):
-    if not cnx:
-        return "Connection needs to be established first."
-
+def get_coils_addresses(cnx, results):
     readable_addrs = []
-    print("Looking for supported address'. From 0 to 65.534")
-    for i in range(0, 512):
-    #for i in range(0, 65534):
-        pkt = ModbusADU() / ModbusPDUReadGeneric(funcCode=1, startAddr=i, quantity=1)
-        pkt.len = len(pkt.payload)
-        ans = cnx.sr1(pkt, timeout=timeout, verbose=0)
-
+    blocks = []
+    start_in = 0
+    flag = False
+    print("[*] Looking for supported address' in ReadCoils function. From 0 to 65.534")
+    for i in range(0, 65534):
+        pkt = ModbusADU() / ModbusPDU01ReadCoils(startAddr=i, quantity=1)
+        pkt.len = len(pkt.payload) + 1
+        try:
+            ans = cnx.sr1(pkt, timeout=timeout, verbose=0)
+        except OSError:
+            print("OSError detected with %d" % i)
+            continue
         if ans:
             # Hex encoded string
             data = binascii.hexlify(bytes(ans))
             return_code = int(data[14:16], 16)
 
-            if return_code is 1:
+            if return_code is 1 and not flag:
+                print("[i] Found")
+                # Start of a readable block
+                start_in = i
                 readable_addrs.append(i)
+                flag = True
+
+            elif return_code is 1 and flag:
+                # Continuation of a readable block
+                readable_addrs.append(i)
+
+            elif return_code is not 1 and flag is True:
+                print("[i] Found last")
+                # End of a readable block
+                ends_in = i - 1
+                flag = False
+                print("[*] Found a readable block from %d to %d" % (start_in, ends_in))
+                blocks.append((start_in, ends_in))
             else:
                 pass
 
-    print(readable_addrs)
+    results.add("COILS", blocks)
+    return readable_addrs
+
+
+def get_discrete_inputs_addresses(cnx, results):
+    readable_addrs = []
+    blocks = []
+    flag = False
+    start_in = 0
+    print("[*] Looking for supported address' in DiscreteInputs function. From 0 to 65.534")
+    for i in range(0, 65534):
+        pkt = ModbusADU() / ModbusPDU02ReadDiscreteInputs(startAddr=i, quantity=1)
+        pkt.len = len(pkt.payload) + 1
+        ans = cnx.sr1(pkt, timeout=timeout, verbose=0)
+        if ans:
+            # Hex encoded string
+            data = binascii.hexlify(bytes(ans))
+            return_code = int(data[14:16], 16)
+            if return_code is 2 and not flag:
+                # Start of a readable block
+                start_in = i
+                readable_addrs.append(i)
+                flag = True
+
+            elif return_code is 2 and flag:
+                # Continuation of a readable block
+                readable_addrs.append(i)
+
+            elif flag:
+                # End of a readable block
+                ends_in = i - 1
+                flag = False
+                print("[*] Found a readable block from %d to %d" % (start_in, ends_in))
+                blocks.append((start_in, ends_in))
+            else:
+                pass
+
+    results.add("DISCRETE INPUTS", blocks)
+    return blocks, readable_addrs
+
+def get_holding_registers_addresses(cnx, results):
+    readable_addrs = []
+    blocks = []
+    flag = False
+    start_in = 0
+    ends_in = 0
+    print("[*] Looking for supported address' in HoldingRegsiters function. From 0 to 4095")
+    # TODO: Done to 65535. Expected an exception from 4095 to 65535
+    for i in range(0, 65535):
+        pkt = ModbusADU() / ModbusPDU03ReadHoldingRegisters(startAddr=i, quantity=1)
+        pkt.len = len(pkt.payload) + 1
+        ans = cnx.sr1(pkt, timeout=timeout, verbose=0)
+        if ans:
+            # Hex encoded string
+            data = binascii.hexlify(bytes(ans))
+            return_code = int(data[14:16], 16)
+            if return_code is 3 and not flag:
+                # Start of a readable block
+                start_in = i
+                readable_addrs.append(i)
+                flag = True
+
+            elif return_code is 3 and flag:
+                # Continuation of a readable block
+                readable_addrs.append(i)
+
+            elif flag:
+                # End of a readable block
+                ends_in = i - 1
+                flag = False
+                print("[*] Found a readable block from %d to %d" % (start_in, ends_in))
+                blocks.append((start_in, ends_in))
+            else:
+                pass
+
+    results.add("HOLDING REGISTERS", blocks)
+    return blocks, readable_addrs
+
+
+def get_input_registers_addresses(cnx, results):
+    readable_addrs = []
+    blocks = []
+    flag = False
+    start_in = 0
+    ends_in = 0
+    print("[*] Looking for supported address' in InputRegsiters function. From 0 to 4095")
+    # TODO: Done to 65535. Expected an exception from 4095 to 65535
+    for i in range(0, 65535):
+        pkt = ModbusADU() / ModbusPDU04ReadInputRegisters(startAddr=i, quantity=1)
+        pkt.len = len(pkt.payload) + 1
+        ans = cnx.sr1(pkt, timeout=timeout, verbose=0)
+        if ans:
+            # Hex encoded string
+            data = binascii.hexlify(bytes(ans))
+            return_code = int(data[14:16], 16)
+            if return_code is 4 and not flag:
+                # Start of a readable block
+                start_in = i
+                readable_addrs.append(i)
+                flag = True
+
+            elif return_code is 4 and flag:
+                # Continuation of a readable block
+                readable_addrs.append(i)
+
+            elif flag:
+                # End of a readable block
+                ends_in = i - 1
+                flag = False
+                print("[*] Found a readable block from %d to %d" % (start_in, ends_in))
+                blocks.append((start_in, ends_in))
+            else:
+                pass
+
+    results.add("INPUT REGISTERS", blocks)
+    return blocks, readable_addrs
+
+
+def restart_communications(cnx):
+    # 0xFF00 restarts Communication event log. 0x0000 doesn't
+    pkt = ModbusADU() / ModbusPDU08Diagnostics(subFunction=1, data=0xFF00)
+    pkt.len = len(pkt.payload) + 1
+    ans = cnx.sr1(pkt, timeout=timeout, verbose=0)
+    if ans:
+        # Hex encoded string
+        data = binascii.hexlify(bytes(ans))
+        return_code = int(data[14:16], 16)
+        if return_code is 8:
+            print("[*] Restarting device...")
+        else:
+            print('\033[41m' + "Not supported function. Could not restart" + '\033[0m')
+
+
+def read_queues(cnx):
+    pkt = ModbusADU() / ModbusPDU24ReadFIFOQueue(pointerAddr=0x0000)
+    pkt.len = len(pkt.payload) + 1
+    ans = cnx.sr1(pkt, timeout=timeout, verbose=0)
+    if ans:
+        # Hex encoded string
+        data = binascii.hexlify(bytes(ans))
+        return_code = int(data[14:16], 16)
+        if return_code is 8:
+            print("[*] Supported function. Looking for queues...")
+            for i in range(0, 65535):
+                pkt = ModbusADU() / ModbusPDU24ReadFIFOQueue(pointerAddr=0x0000)
+                pkt.len = len(pkt.payload) + 1
+                print(i)
+                ans = cnx.sr1(pkt, timeout=timeout, verbose=0)
+
+                data = binascii.hexlify(bytes(ans))
+                return_code = int(data[14:16], 16)
+                if return_code is 24:
+                    try:
+                        byte_count = int(data[17:21], 16)
+                        fifo_count = int(data[21:25], 16)
+                        if fifo_count is 0:
+                            continue
+                        else:
+                            print("[*] Found Queue in %d register of length %d." % (i, fifo_count))
+                    except Exception:
+                        continue
+
+        else:
+            print('\033[41m' + "Not supported function ReadFIFOQueue." + '\033[0m')
+
+
+class Results:
+
+    SupportedFunctions = []
+    Names = []
+
+    # Each elements contains an array of tuples
+    Blocks = []
+
+    def add(self, name, block):
+        self.Names.append(name)
+        self.Blocks.append(block)
+
+    def add_function(self, number):
+        self.SupportedFunctions.append(number)
+
+    def show(self):
+        print(" #################################################################### ")
+        print("\t SUPPORTED FUNCTION CODES")
+        print("\t\t" + str(self.SupportedFunctions))
+        for name, blocks in zip(self.Names, self.Blocks):
+            print("\t\t"+name)
+            for i in blocks:
+                print("\t\tFrom \t %d \t to \t %d" % (i[0], i[1]))
+        print(" #################################################################### ")
